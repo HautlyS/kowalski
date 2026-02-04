@@ -150,6 +150,7 @@
 //! - `serde`: Serialization
 
 pub mod builder;
+pub mod code_block_parser;
 pub mod config;
 pub mod context;
 pub mod context_fold;
@@ -157,15 +158,18 @@ pub mod core;
 pub mod error;
 pub mod executor;
 pub mod federation;
+pub mod repl_executor;
 pub mod smart_scheduler;
 
 // Re-export main types for convenience
 pub use builder::RLMBuilder;
+pub use code_block_parser::{CodeBlockParser, CodeBlock};
 pub use config::RLMConfig;
 pub use context::RLMContext;
 pub use context_fold::{ContextFolder, ContextFoldConfig, FoldingStats};
 pub use error::{RLMError, RLMResult};
 pub use executor::RLMExecutor;
+pub use repl_executor::{REPLExecutor, REPLExecutorFactory, PythonREPL, RustREPL, JavaREPL, BashREPL, JavaScriptREPL};
 pub use smart_scheduler::{SmartScheduler, SchedulerConfig, ScheduledTask, AgentStatus};
 
 // Re-export common Phase 1 types

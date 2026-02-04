@@ -71,6 +71,34 @@ pub enum RLMError {
     /// Internal error (should not happen)
     #[error("Internal error: {0}")]
     InternalError(String),
+
+    /// REPL execution error
+    #[error("REPL execution failed: {0}")]
+    REPLError(String),
+
+    /// REPL timeout error
+    #[error("REPL timeout after {0}ms")]
+    REPLTimeout(u64),
+
+    /// Device not found error
+    #[error("Device not found: {0}")]
+    DeviceNotFound(String),
+
+    /// No suitable devices available
+    #[error("No suitable devices available: {0}")]
+    NoDevicesAvailable(String),
+
+    /// Device failed error
+    #[error("Device {0} failed: {1}")]
+    DeviceFailed(String, String),
+
+    /// Network error
+    #[error("Network error: {0}")]
+    NetworkError(String),
+
+    /// Cluster discovery timeout
+    #[error("Cluster discovery timeout")]
+    DiscoveryTimeout,
 }
 
 impl RLMError {
@@ -147,5 +175,30 @@ impl RLMError {
     /// Create a new context folding error
     pub fn context_folding(msg: impl Into<String>) -> Self {
         RLMError::ContextFoldingFailed(msg.into())
+    }
+
+    /// Create a new REPL error
+    pub fn repl(msg: impl Into<String>) -> Self {
+        RLMError::REPLError(msg.into())
+    }
+
+    /// Create a new device not found error
+    pub fn device_not_found(device_id: impl Into<String>) -> Self {
+        RLMError::DeviceNotFound(device_id.into())
+    }
+
+    /// Create a new no devices available error
+    pub fn no_devices(msg: impl Into<String>) -> Self {
+        RLMError::NoDevicesAvailable(msg.into())
+    }
+
+    /// Create a new device failed error
+    pub fn device_failed(device_id: impl Into<String>, reason: impl Into<String>) -> Self {
+        RLMError::DeviceFailed(device_id.into(), reason.into())
+    }
+
+    /// Create a new network error
+    pub fn network(msg: impl Into<String>) -> Self {
+        RLMError::NetworkError(msg.into())
     }
 }

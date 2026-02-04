@@ -1,0 +1,57 @@
+# Cargo build optimization configuration
+[build]
+# Enable incremental compilation
+incremental = true
+
+# Optimized profiles
+[profile.dev]
+# Minimal optimization for dev builds
+opt-level = 0
+# Keep debug info for development
+debug = true
+# Incremental compilation
+incremental = true
+# Faster linking and less memory
+lto = false
+codegen-units = 512
+split-debuginfo = "packed"
+
+[profile.release]
+# Maximum optimization for release
+opt-level = 2
+# Optimize for runtime performance
+lto = false
+codegen-units = 32
+# Strip symbols to reduce binary size
+strip = false
+# Enable incremental compilation even in release
+incremental = true
+split-debuginfo = "packed"
+
+[profile.release-opt]
+# Ultra-optimized profile for production, inherits from release
+inherits = "release"
+opt-level = 3
+lto = "fat"  # Full LTO for maximum optimization
+codegen-units = 1
+
+# Faster debug builds for CI/testing
+[profile.ci]
+inherits = "release"
+opt-level = 2
+lto = false
+codegen-units = 16
+
+[term]
+# Colorize output
+color = 'auto'
+# Show progress
+progress.when = 'auto'
+verbose = false
+
+# Per-package configuration
+[package.kowalski]
+opt-level = 2
+
+[package.kowalski-core]
+opt-level = 2
