@@ -1,0 +1,70 @@
+[package]
+name = "kowalski-rlm"
+version.workspace = true
+edition.workspace = true
+description = "Recursive Language Model framework combining RLM core and federation capabilities"
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+
+[dependencies]
+# Kowalski ecosystem
+kowalski-core = { path = "../kowalski-core" }
+kowalski-code-agent = { path = "../kowalski-code-agent" }
+kowalski-federation = { path = "../kowalski-federation" }
+kowalski-agent-template = { path = "../kowalski-agent-template" }
+
+# Async runtime and utilities
+tokio = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Error handling
+thiserror = { workspace = true }
+
+# Logging
+log = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+env_logger = { workspace = true }
+
+# Time
+chrono = { workspace = true }
+
+# Utilities
+uuid = { workspace = true }
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[[example]]
+name = "basic_rlm"
+path = "examples/basic_rlm.rs"
+
+[[example]]
+name = "with_federation"
+path = "examples/with_federation.rs"
+
+[[example]]
+name = "deep_recursion"
+path = "examples/deep_recursion.rs"
+
+[[example]]
+name = "batch_execution"
+path = "examples/batch_execution.rs"
+
+[[example]]
+name = "custom_agents"
+path = "examples/custom_agents.rs"
+
+# Benchmarks can be added later with: cargo bench
+
+[lib]
+name = "kowalski_rlm"
+path = "src/lib.rs"

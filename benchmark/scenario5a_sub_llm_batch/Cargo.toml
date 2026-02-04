@@ -1,0 +1,16 @@
+[package]
+name = "benchmark_s5a_sub_llm_batch"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "benchmark_s5a_sub_llm_batch"
+path = "main.rs"
+
+[dependencies]
+kowalski-rlm = { path = "../../kowalski-rlm" }
+kowalski-federation = { path = "../../kowalski-federation" }
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+serde_json = "1.0"
+chrono = "0.4"

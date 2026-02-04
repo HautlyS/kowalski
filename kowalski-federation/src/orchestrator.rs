@@ -1,15 +1,18 @@
 use std::sync::Arc;
+use std::collections::HashMap;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::info;
+use serde::{Serialize, Deserialize};
 
 use crate::{
-    agent::{FederatedAgent, FederationRole},
+    agent::FederationRole,
     registry::AgentRegistry,
     message::{FederationMessage, MessageType},
+    error::FederationError,
 };
 
 /// Represents a task that needs to be delegated
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FederationTask {
     pub id: String,
     pub task_type: String,
@@ -119,7 +122,7 @@ impl Orchestrator {
         let message = FederationMessage::new(
             MessageType::TaskDelegation,
             "coordinator".to_string(),
-            Some(assigned_agent),
+            Some(assigned_agent.clone()),
             serde_json::to_string(&task).unwrap_or_default(),
             Some(serde_json::json!({
                 "task_id": task_id,
@@ -186,21 +189,4 @@ fn get_timestamp() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
-}
-
-/// Extended FederationError enum for orchestrator-specific errors
-#[derive(Error, Debug, Serialize)]
-pub enum FederationError {
-    #[error("Task {0} not found")]
-    TaskNotFound(String),
-    #[error("Invalid task state for task {0}")]
-    InvalidTaskState(String),
-    #[error("No suitable agents available for task delegation")]
-    NoSuitableAgents,
-    #[error("Failed to deliver task delegation message: {0}")]
-    MessageDeliveryFailed(String),
-    #[error("Serialization error: {0}")]
-    SerializationError(String),
-    #[error("Deserialization error: {0}")]
-    DeserializationError(String),
 }

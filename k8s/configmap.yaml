@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kowalski-config
+  namespace: kowalski-rlm
+  labels:
+    app.kubernetes.io/name: kowalski
+    app.kubernetes.io/component: config
+data:
+  # RLM Configuration
+  RUST_LOG: "info"
+  KOWALSKI_HOST: "0.0.0.0"
+  KOWALSKI_PORT: "8080"
+  
+  # RLM Settings
+  RLM_MAX_ITERATIONS: "10"
+  RLM_MAX_CONTEXT_LENGTH: "200000"
+  RLM_MAX_REPL_OUTPUT: "8192"
+  
+  # Federation Settings
+  FEDERATION_MAX_DEPTH: "3"
+  FEDERATION_WORKER_POOL_SIZE: "10"
+  FEDERATION_TASK_TIMEOUT_SECS: "300"
+  
+  # Scheduling Settings
+  SCHEDULER_MAX_CONCURRENT: "20"
+  SCHEDULER_QUEUE_SIZE: "100"
+  SCHEDULER_COST_WEIGHT: "0.4"
+  SCHEDULER_LATENCY_WEIGHT: "0.35"
+  SCHEDULER_LOAD_WEIGHT: "0.25"
+  
+  # Memory Settings
+  MEMORY_WORKING_SIZE_MB: "500"
+  MEMORY_EPISODIC_SIZE_MB: "1000"
+  MEMORY_SEMANTIC_SIZE_MB: "2000"
+  
+  # Logging
+  LOG_FORMAT: "json"
+  LOG_LEVEL: "info"

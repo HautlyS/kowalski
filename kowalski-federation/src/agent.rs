@@ -7,7 +7,7 @@ use kowalski_core::agent::MessageHandler;
 use kowalski_core::{Agent, BaseAgent};
 
 /// Represents the role of an agent in the federation
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum FederationRole {
     /// Coordinator manages the federation and orchestrates tasks
     Coordinator,
