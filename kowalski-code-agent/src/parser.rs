@@ -16,7 +16,7 @@ impl CodeParser {
         // Initialize with Rust language by default - BY HAND!!!
         parser
             .set_language(&tree_sitter_rust::LANGUAGE.into())
-            .expect("Error loading Rust grammar");
+            .map_err(|e| CodeAgentError::Parser(format!("Failed to load Rust grammar: {}", e)))?;
 
         Ok(Self { parser, config })
     }

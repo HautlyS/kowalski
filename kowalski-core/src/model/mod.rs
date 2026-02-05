@@ -33,7 +33,9 @@ impl ModelManager {
     /// Creates a new model manager with the specified base URL.
     pub fn new(base_url: String) -> Result<Self, KowalskiError> {
         let client = reqwest::ClientBuilder::new()
-            .pool_max_idle_per_host(0)
+            .pool_max_idle_per_host(10)
+            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(300))
             .build()
             .map_err(KowalskiError::Request)?;
 

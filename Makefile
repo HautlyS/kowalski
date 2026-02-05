@@ -1,4 +1,4 @@
-.PHONY: build build-dev build-release build-opt build-ci clean check test help cache-info
+.PHONY: build build-dev build-release build-opt build-ci build-rlm build-rlm-release clean check test help cache-info
 
 # Default target
 help:
@@ -8,6 +8,8 @@ help:
 	@echo "make build-release  - Release build with thin LTO (recommended)"
 	@echo "make build-opt      - Ultra-optimized release build (slowest, most optimized)"
 	@echo "make build-ci       - CI profile build (balanced)"
+	@echo "make build-rlm      - Build only kowalski-rlm (fast incremental)"
+	@echo "make build-rlm-release - Build kowalski-rlm in release mode"
 	@echo "make check          - Check code without building"
 	@echo "make clean          - Full clean (removes target directory)"
 	@echo "make clean-incremental - Clean only incremental cache"
@@ -18,6 +20,7 @@ help:
 	@echo ""
 	@echo "Examples:"
 	@echo "  make build-release -j 4     - Release with 4 parallel jobs"
+	@echo "  make build-rlm              - Build kowalski-rlm with deps (incremental)"
 	@echo "  ./build.sh --release        - Using build script"
 
 # Fast incremental build
@@ -39,6 +42,14 @@ build-opt:
 # CI profile build
 build-ci:
 	CARGO_INCREMENTAL=1 cargo build --profile ci
+
+# Build only kowalski-rlm (fast - only rebuilds if changed)
+build-rlm:
+	CARGO_INCREMENTAL=1 cargo build --package kowalski-rlm
+
+# Build only kowalski-rlm in release mode (fast incremental)
+build-rlm-release:
+	CARGO_INCREMENTAL=1 cargo build --package kowalski-rlm --release
 
 # Check without building
 check:

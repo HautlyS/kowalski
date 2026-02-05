@@ -21,9 +21,8 @@ pub struct CodeAgent {
 
 impl CodeAgent {
     /// Creates a new CodeAgent with the specified configuration
-    pub async fn new(_config: Config) -> Result<Self, KowalskiError> {
-        // TODO: Convert Config to CodeAgentConfig if needed
-        let code_config = CodeAgentConfig::default();
+    pub async fn new(config: Config) -> Result<Self, KowalskiError> {
+        let code_config = CodeAgentConfig::from(config);
 
         // Create language-specific analysis tools
         let java_tool = JavaAnalysisTool::new();

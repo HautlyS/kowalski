@@ -10,6 +10,7 @@ use qdrant_client::Payload;
 use qdrant_client::Qdrant;
 use qdrant_client::qdrant::{Condition, Filter, PointStruct};
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::sync::OnceCell;
 use serde_json::json;
@@ -143,8 +144,9 @@ impl MemoryProvider for SemanticStore {
             .result
             .into_iter()
             .map(|p| {
-                let vectors = p.vectors.unwrap();
-                println!("DEBUG: vectors struct = {:?}", vectors);
+                if let Some(vectors) = p.vectors.as_ref() {
+                    println!("DEBUG: vectors struct = {:?}", vectors);
+                }
                 let custom_id = p.payload.get("custom_id")
                     .and_then(|v| v.as_str())
                     .map_or(String::new(), |v| v.to_string());
@@ -184,8 +186,9 @@ impl MemoryProvider for SemanticStore {
             );
             // Again, creating simplified MemoryUnits from results
             for point in search_result.result {
-                let vectors = point.vectors.unwrap();
-                println!("DEBUG: vectors struct = {:?}", vectors);
+                if let Some(vectors) = point.vectors.as_ref() {
+                    println!("DEBUG: vectors struct = {:?}", vectors);
+                }
                 let custom_id = point.payload.get("custom_id")
                     .and_then(|v| v.as_str())
                     .map_or(String::new(), |v| v.to_string());
@@ -225,15 +228,20 @@ impl MemoryProvider for SemanticStore {
     }
 }
 
-static SEMANTIC_STORE: OnceCell<Mutex<SemanticStore>> = OnceCell::const_new();
+static SEMANTIC_STORE: OnceCell<Arc<Mutex<SemanticStore>>> = OnceCell::const_new();
 
 /// Get or initialize the singleton SemanticStore asynchronously.
 pub async fn get_or_init_semantic_store(
     qdrant_url: &str,
-) -> Result<&'static Mutex<SemanticStore>, String> {
-    SEMANTIC_STORE
-        .get_or_try_init(|| async { Ok(Mutex::new(SemanticStore::new(qdrant_url).await?)) })
-        .await
+) -> Result<Arc<Mutex<SemanticStore>>, String> {
+    let store = SEMANTIC_STORE
+        .get_or_try_init(|| async {
+            let result: Result<Arc<Mutex<SemanticStore>>, String> = 
+                Ok(Arc::new(Mutex::new(SemanticStore::new(qdrant_url).await?)));
+            result
+        })
+        .await?;
+    Ok(Arc::clone(store))
 }
 
 #[cfg(test)]
@@ -247,7 +255,7 @@ mod tests {
             id: id.to_string(),
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
-                .unwrap()
+                .unwrap_or_default()
                 .as_secs(),
             content: content.to_string(),
             embedding: Some(vec![

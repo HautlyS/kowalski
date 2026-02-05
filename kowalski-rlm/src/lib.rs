@@ -155,9 +155,12 @@ pub mod config;
 pub mod context;
 pub mod context_fold;
 pub mod core;
+pub mod device_health;
 pub mod error;
 pub mod executor;
+pub mod exo_cluster_manager;
 pub mod federation;
+pub mod remote_repl_executor;
 pub mod repl_executor;
 pub mod smart_scheduler;
 
@@ -167,8 +170,14 @@ pub use code_block_parser::{CodeBlockParser, CodeBlock};
 pub use config::RLMConfig;
 pub use context::RLMContext;
 pub use context_fold::{ContextFolder, ContextFoldConfig, FoldingStats};
+pub use device_health::{HealthMonitor, DeviceHealth, DeviceCapabilities, DeviceClusterStatus};
 pub use error::{RLMError, RLMResult};
 pub use executor::RLMExecutor;
+pub use exo_cluster_manager::{
+    ExoClusterManager, ExoClusterState, ExoDeviceInfo, ExoModelInfo, ExoModelListResponse,
+    REPLRequest, REPLResponse,
+};
+pub use remote_repl_executor::RemoteREPLExecutor;
 pub use repl_executor::{REPLExecutor, REPLExecutorFactory, PythonREPL, RustREPL, JavaREPL, BashREPL, JavaScriptREPL};
 pub use smart_scheduler::{SmartScheduler, SchedulerConfig, ScheduledTask, AgentStatus};
 

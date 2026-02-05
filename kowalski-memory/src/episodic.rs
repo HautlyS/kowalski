@@ -5,6 +5,7 @@ use crate::{MemoryProvider, MemoryQuery, MemoryUnit};
 use async_trait::async_trait;
 use log::{debug, error, info};
 use rocksdb::{DB, IteratorMode, Options};
+use std::sync::Arc;
 use tokio::sync::{Mutex, OnceCell};
 use reqwest;
 use serde_json;
@@ -51,15 +52,18 @@ impl EpisodicBuffer {
     }
 }
 
-static EPISODIC_BUFFER: OnceCell<Mutex<EpisodicBuffer>> = OnceCell::const_new();
+static EPISODIC_BUFFER: OnceCell<Arc<Mutex<EpisodicBuffer>>> = OnceCell::const_new();
 
 /// Get or initialize the singleton EpisodicBuffer asynchronously, wrapped in a Mutex for safe mutable access.
 pub async fn get_or_init_episodic_buffer(
     path: &str,
-) -> Result<&'static Mutex<EpisodicBuffer>, String> {
-    EPISODIC_BUFFER
-        .get_or_try_init(|| async move { Ok(Mutex::new(EpisodicBuffer::new(path)?)) })
-        .await
+) -> Result<Arc<Mutex<EpisodicBuffer>>, String> {
+    let buffer = EPISODIC_BUFFER
+        .get_or_try_init(|| async move {
+            Ok::<Arc<Mutex<EpisodicBuffer>>, String>(Arc::new(Mutex::new(EpisodicBuffer::new(path)?)))
+        })
+        .await?;
+    Ok(Arc::clone(buffer))
 }
 
 /// Utility: Get Ollama embedding for a string
@@ -139,7 +143,10 @@ impl MemoryProvider for EpisodicBuffer {
         info!("[EpisodicBuffer][RETRIEVE] Query: '{}'", query);
         // Try to get embedding for the query
         let query_embedding = get_ollama_embedding(query).await.ok();
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         let max_time_span = 60 * 60 * 24 * 30; // 30 days in seconds, for recency normalization
         let iter = self.db.iterator(IteratorMode::Start);
         let mut scored = Vec::new();
@@ -204,7 +211,7 @@ mod tests {
     fn create_test_unit(id: &str, content: &str) -> MemoryUnit {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         MemoryUnit {
             id: id.to_string(),

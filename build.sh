@@ -13,6 +13,7 @@ NC='\033[0m' # No Color
 PROFILE="release"
 VERBOSE=false
 CLEAN=false
+PACKAGE=""
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -33,6 +34,10 @@ while [[ $# -gt 0 ]]; do
             PROFILE="ci"
             shift
             ;;
+        -p|--package)
+            PACKAGE=$2
+            shift 2
+            ;;
         -v|--verbose)
             VERBOSE=true
             shift
@@ -47,7 +52,12 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--dev|--release|--opt|--ci] [-v] [--clean] [-j JOBS]"
+            echo "Usage: $0 [--dev|--release|--opt|--ci] [-p|--package PACKAGE] [-v] [--clean] [-j JOBS]"
+            echo ""
+            echo "Examples:"
+            echo "  $0 --release                           # Build everything in release mode"
+            echo "  $0 -p kowalski-rlm --release           # Build only kowalski-rlm"
+            echo "  $0 -p kowalski-rlm --release -j 4      # Build kowalski-rlm with 4 jobs"
             exit 1
             ;;
     esac
@@ -55,6 +65,9 @@ done
 
 echo -e "${YELLOW}=== Kowalski Build Script ===${NC}"
 echo -e "Profile: ${GREEN}$PROFILE${NC}"
+if [ -n "$PACKAGE" ]; then
+    echo -e "Package: ${GREEN}$PACKAGE${NC}"
+fi
 
 # Show system info
 echo -e "\n${YELLOW}System Information:${NC}"
@@ -65,8 +78,13 @@ echo "Disk Space: $(df -h . | tail -1 | awk '{print $4}' 2>/dev/null) free"
 # Clean if requested
 if [ "$CLEAN" = true ]; then
     echo -e "\n${YELLOW}Cleaning build artifacts...${NC}"
-    cargo clean
-    echo -e "${GREEN}Clean complete.${NC}"
+    if [ -n "$PACKAGE" ]; then
+        cargo clean -p "$PACKAGE"
+        echo -e "${GREEN}Clean complete for package: $PACKAGE${NC}"
+    else
+        cargo clean
+        echo -e "${GREEN}Clean complete.${NC}"
+    fi
 fi
 
 # Check for target directory size
@@ -75,6 +93,11 @@ echo "Build cache size: $TARGET_SIZE"
 
 # Build command
 BUILD_CMD="cargo build"
+
+# Add package selection
+if [ -n "$PACKAGE" ]; then
+    BUILD_CMD="$BUILD_CMD --package $PACKAGE"
+fi
 
 if [ "$PROFILE" != "dev" ]; then
     if [ "$PROFILE" = "release-opt" ] || [ "$PROFILE" = "ci" ]; then
@@ -110,13 +133,19 @@ if eval "$BUILD_CMD"; then
     
     # Show output size
     if [ "$PROFILE" = "release" ] || [ "$PROFILE" = "release-opt" ]; then
-        BINARY_SIZE=$(ls -lh target/$PROFILE/kowalski 2>/dev/null | awk '{print $5}')
+        if [ -n "$PACKAGE" ]; then
+            BINARY_PATH="target/$PROFILE/$PACKAGE"
+        else
+            BINARY_PATH="target/$PROFILE/kowalski"
+        fi
+        BINARY_SIZE=$(ls -lh "$BINARY_PATH" 2>/dev/null | awk '{print $5}')
         if [ -n "$BINARY_SIZE" ]; then
             echo "Binary size: $BINARY_SIZE"
         fi
     fi
     
     echo -e "\n${GREEN}Cache ready for next build (incremental enabled)${NC}"
+    echo -e "${GREEN}Tip: Only changed crates will be recompiled on next build${NC}"
 else
     END_TIME=$(date +%s)
     DURATION=$((END_TIME - START_TIME))
@@ -126,6 +155,6 @@ else
     echo "1. Reduce parallel jobs: -j 2"
     echo "2. Check disk space: df -h"
     echo "3. Check RAM: free -h"
-    echo "4. Clean cache: --clean"
-    exit 1
+    echo "4. Clean specific package: $0 -p $PACKAGE --clean"
+    echo "5. Clean all: $0 --clean"    exit 1
 fi

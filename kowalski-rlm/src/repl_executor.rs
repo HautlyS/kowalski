@@ -6,7 +6,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use crate::error::{RLMError, RLMResult};
 use uuid::Uuid;
-use std::path::PathBuf;
 
 /// Trait for REPL executors
 #[async_trait]
@@ -21,38 +20,32 @@ pub trait REPLExecutor: Send + Sync {
 /// Python REPL Executor
 pub struct PythonREPL {
     timeout: Duration,
-    temp_dir: PathBuf,
 }
 
 /// Rust REPL Executor
 pub struct RustREPL {
     timeout: Duration,
-    temp_dir: PathBuf,
 }
 
 /// Java REPL Executor
 pub struct JavaREPL {
     timeout: Duration,
-    temp_dir: PathBuf,
 }
 
 /// Bash/Shell REPL Executor
 pub struct BashREPL {
     timeout: Duration,
-    temp_dir: PathBuf,
 }
 
 /// JavaScript REPL Executor
 pub struct JavaScriptREPL {
     timeout: Duration,
-    temp_dir: PathBuf,
 }
 
 impl PythonREPL {
     pub fn new() -> Self {
         PythonREPL {
             timeout: Duration::from_secs(30),
-            temp_dir: PathBuf::from("/tmp/kowalski_python"),
         }
     }
 
@@ -71,13 +64,12 @@ impl Default for PythonREPL {
 #[async_trait]
 impl REPLExecutor for PythonREPL {
     async fn execute(&self, code: &str) -> RLMResult<String> {
-        // Create temp directory if it doesn't exist
-        let _ = fs::create_dir_all(&self.temp_dir).await;
+        // Create temp directory that auto-cleans on drop
+        let temp_dir = tempfile::TempDir::new()
+            .map_err(|e| RLMError::ExecutionError(format!("Failed to create temp dir: {}", e)))?;
+        
+        let temp_file = temp_dir.path().join(format!("{}.py", Uuid::new_v4()));
 
-        // Generate unique temp file
-        let temp_file = self.temp_dir.join(format!("{}.py", Uuid::new_v4()));
-
-        // Write code to temp file
         let mut file = fs::File::create(&temp_file)
             .await
             .map_err(|e| RLMError::ExecutionError(format!("Failed to create temp file: {}", e)))?;
@@ -90,25 +82,24 @@ impl REPLExecutor for PythonREPL {
             .await
             .map_err(|e| RLMError::ExecutionError(format!("Failed to sync file: {}", e)))?;
 
-        // Execute Python
-        let output = tokio::time::timeout(
-            self.timeout,
-            Command::new("python3")
-                .arg(&temp_file)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output(),
-        )
-        .await
-        .map_err(|_| {
-            RLMError::REPLTimeout(self.timeout.as_millis() as u64)
-        })?
-        .map_err(|e| RLMError::ExecutionError(format!("Failed to execute Python: {}", e)))?;
+        drop(file);
 
-        // Cleanup temp file
-        let _ = fs::remove_file(&temp_file).await;
+        let child = Command::new("python3")
+            .arg(&temp_file)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| RLMError::ExecutionError(format!("Failed to spawn Python: {}", e)))?;
 
-        // Combine stdout and stderr
+        let output = match tokio::time::timeout(self.timeout, child.wait_with_output()).await {
+            Ok(result) => result.map_err(|e| {
+                RLMError::ExecutionError(format!("Failed to wait for Python: {}", e))
+            })?,
+            Err(_) => {
+                return Err(RLMError::REPLTimeout(self.timeout.as_millis() as u64));
+            }
+        };
+
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
@@ -136,8 +127,7 @@ impl REPLExecutor for PythonREPL {
 impl RustREPL {
     pub fn new() -> Self {
         RustREPL {
-            timeout: Duration::from_secs(60),
-            temp_dir: PathBuf::from("/tmp/kowalski_rust"),
+            timeout: Duration::from_secs(30),
         }
     }
 
@@ -156,13 +146,12 @@ impl Default for RustREPL {
 #[async_trait]
 impl REPLExecutor for RustREPL {
     async fn execute(&self, code: &str) -> RLMResult<String> {
-        // Create temp directory
-        let _ = fs::create_dir_all(&self.temp_dir).await;
-
-        let proj_dir = self.temp_dir.join(format!("proj_{}", Uuid::new_v4()));
+        let temp_dir = tempfile::TempDir::new()
+            .map_err(|e| RLMError::ExecutionError(format!("Failed to create temp dir: {}", e)))?;
+        
+        let proj_dir = temp_dir.path().join(format!("proj_{}", Uuid::new_v4()));
         let _ = fs::create_dir_all(&proj_dir).await;
 
-        // Create Cargo.toml
         let cargo_toml = proj_dir.join("Cargo.toml");
         let manifest = r#"[package]
 name = "kowalski_rust_exec"
@@ -175,7 +164,6 @@ edition = "2021"
             .await
             .map_err(|e| RLMError::ExecutionError(format!("Failed to create Cargo.toml: {}", e)))?;
 
-        // Create src/main.rs
         let src_dir = proj_dir.join("src");
         let _ = fs::create_dir_all(&src_dir).await;
         let main_file = src_dir.join("main.rs");
@@ -185,26 +173,24 @@ edition = "2021"
             .await
             .map_err(|e| RLMError::ExecutionError(format!("Failed to write main.rs: {}", e)))?;
 
-        // Compile and run
-        let output = tokio::time::timeout(
-            self.timeout,
-            Command::new("cargo")
-                .arg("run")
-                .arg("--manifest-path")
-                .arg(&cargo_toml)
-                .arg("--release")
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output(),
-        )
-        .await
-        .map_err(|_| {
-            RLMError::REPLTimeout(self.timeout.as_millis() as u64)
-        })?
-        .map_err(|e| RLMError::ExecutionError(format!("Failed to execute Rust: {}", e)))?;
+        let child = Command::new("cargo")
+            .arg("run")
+            .arg("--manifest-path")
+            .arg(&cargo_toml)
+            .arg("--release")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| RLMError::ExecutionError(format!("Failed to spawn Rust: {}", e)))?;
 
-        // Cleanup
-        let _ = fs::remove_dir_all(&proj_dir).await;
+        let output = match tokio::time::timeout(self.timeout, child.wait_with_output()).await {
+            Ok(result) => result.map_err(|e| {
+                RLMError::ExecutionError(format!("Failed to wait for Rust: {}", e))
+            })?,
+            Err(_) => {
+                return Err(RLMError::REPLTimeout(self.timeout.as_millis() as u64));
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -232,7 +218,6 @@ impl JavaREPL {
     pub fn new() -> Self {
         JavaREPL {
             timeout: Duration::from_secs(30),
-            temp_dir: PathBuf::from("/tmp/kowalski_java"),
         }
     }
 
@@ -251,14 +236,13 @@ impl Default for JavaREPL {
 #[async_trait]
 impl REPLExecutor for JavaREPL {
     async fn execute(&self, code: &str) -> RLMResult<String> {
-        // Create temp directory
-        let _ = fs::create_dir_all(&self.temp_dir).await;
+        let temp_dir = tempfile::TempDir::new()
+            .map_err(|e| RLMError::ExecutionError(format!("Failed to create temp dir: {}", e)))?;
 
         let uuid = Uuid::new_v4().to_string().replace("-", "");
         let class_name = format!("Kowalski{}", &uuid[0..8]);
-        let java_file = self.temp_dir.join(format!("{}.java", class_name));
+        let java_file = temp_dir.path().join(format!("{}.java", class_name));
 
-        // Wrap code in class
         let java_code = format!(
             "public class {} {{\n    public static void main(String[] args) {{\n        {}\n    }}\n}}",
             class_name, code
@@ -268,41 +252,44 @@ impl REPLExecutor for JavaREPL {
             .await
             .map_err(|e| RLMError::ExecutionError(format!("Failed to write Java file: {}", e)))?;
 
-        // Compile
-        tokio::time::timeout(
-            self.timeout,
-            Command::new("javac")
-                .arg(&java_file)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output(),
-        )
-        .await
-        .map_err(|_| {
-            RLMError::REPLTimeout(self.timeout.as_millis() as u64)
-        })?
-        .map_err(|e| RLMError::ExecutionError(format!("Failed to compile Java: {}", e)))?;
+        let javac_child = Command::new("javac")
+            .arg(&java_file)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| RLMError::ExecutionError(format!("Failed to spawn javac: {}", e)))?;
 
-        // Run
-        let output = tokio::time::timeout(
-            self.timeout,
-            Command::new("java")
-                .arg("-cp")
-                .arg(&self.temp_dir)
-                .arg(&class_name)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output(),
-        )
-        .await
-        .map_err(|_| {
-            RLMError::REPLTimeout(self.timeout.as_millis() as u64)
-        })?
-        .map_err(|e| RLMError::ExecutionError(format!("Failed to run Java: {}", e)))?;
+        let compile_output = match tokio::time::timeout(self.timeout, javac_child.wait_with_output()).await {
+            Ok(result) => result.map_err(|e| {
+                RLMError::ExecutionError(format!("Failed to wait for javac: {}", e))
+            })?,
+            Err(_) => {
+                return Err(RLMError::REPLTimeout(self.timeout.as_millis() as u64));
+            }
+        };
 
-        // Cleanup
-        let _ = fs::remove_file(&java_file).await;
-        let _ = fs::remove_file(self.temp_dir.join(format!("{}.class", class_name))).await;
+        if !compile_output.status.success() {
+            let stderr = String::from_utf8_lossy(&compile_output.stderr).to_string();
+            return Err(RLMError::REPLError(format!("Java compilation failed:\n{}", stderr)));
+        }
+
+        let java_child = Command::new("java")
+            .arg("-cp")
+            .arg(temp_dir.path())
+            .arg(&class_name)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| RLMError::ExecutionError(format!("Failed to spawn java: {}", e)))?;
+
+        let output = match tokio::time::timeout(self.timeout, java_child.wait_with_output()).await {
+            Ok(result) => result.map_err(|e| {
+                RLMError::ExecutionError(format!("Failed to wait for java: {}", e))
+            })?,
+            Err(_) => {
+                return Err(RLMError::REPLTimeout(self.timeout.as_millis() as u64));
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -330,7 +317,6 @@ impl BashREPL {
     pub fn new() -> Self {
         BashREPL {
             timeout: Duration::from_secs(30),
-            temp_dir: PathBuf::from("/tmp/kowalski_bash"),
         }
     }
 
@@ -349,33 +335,30 @@ impl Default for BashREPL {
 #[async_trait]
 impl REPLExecutor for BashREPL {
     async fn execute(&self, code: &str) -> RLMResult<String> {
-        // Create temp directory if needed
-        let _ = fs::create_dir_all(&self.temp_dir).await;
+        let temp_dir = tempfile::TempDir::new()
+            .map_err(|e| RLMError::ExecutionError(format!("Failed to create temp dir: {}", e)))?;
 
-        let bash_file = self.temp_dir.join(format!("{}.sh", Uuid::new_v4()));
+        let bash_file = temp_dir.path().join(format!("{}.sh", Uuid::new_v4()));
 
-        // Write script
         fs::write(&bash_file, code)
             .await
             .map_err(|e| RLMError::ExecutionError(format!("Failed to write bash script: {}", e)))?;
 
-        // Execute
-        let output = tokio::time::timeout(
-            self.timeout,
-            Command::new("bash")
-                .arg(&bash_file)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output(),
-        )
-        .await
-        .map_err(|_| {
-            RLMError::REPLTimeout(self.timeout.as_millis() as u64)
-        })?
-        .map_err(|e| RLMError::ExecutionError(format!("Failed to execute bash: {}", e)))?;
+        let child = Command::new("bash")
+            .arg(&bash_file)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| RLMError::ExecutionError(format!("Failed to spawn bash: {}", e)))?;
 
-        // Cleanup
-        let _ = fs::remove_file(&bash_file).await;
+        let output = match tokio::time::timeout(self.timeout, child.wait_with_output()).await {
+            Ok(result) => result.map_err(|e| {
+                RLMError::ExecutionError(format!("Failed to wait for bash: {}", e))
+            })?,
+            Err(_) => {
+                return Err(RLMError::REPLTimeout(self.timeout.as_millis() as u64));
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -403,7 +386,6 @@ impl JavaScriptREPL {
     pub fn new() -> Self {
         JavaScriptREPL {
             timeout: Duration::from_secs(30),
-            temp_dir: PathBuf::from("/tmp/kowalski_js"),
         }
     }
 
@@ -422,33 +404,30 @@ impl Default for JavaScriptREPL {
 #[async_trait]
 impl REPLExecutor for JavaScriptREPL {
     async fn execute(&self, code: &str) -> RLMResult<String> {
-        // Create temp directory if needed
-        let _ = fs::create_dir_all(&self.temp_dir).await;
+        let temp_dir = tempfile::TempDir::new()
+            .map_err(|e| RLMError::ExecutionError(format!("Failed to create temp dir: {}", e)))?;
 
-        let js_file = self.temp_dir.join(format!("{}.js", Uuid::new_v4()));
+        let js_file = temp_dir.path().join(format!("{}.js", Uuid::new_v4()));
 
-        // Write code
         fs::write(&js_file, code)
             .await
             .map_err(|e| RLMError::ExecutionError(format!("Failed to write JS file: {}", e)))?;
 
-        // Execute with node
-        let output = tokio::time::timeout(
-            self.timeout,
-            Command::new("node")
-                .arg(&js_file)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output(),
-        )
-        .await
-        .map_err(|_| {
-            RLMError::REPLTimeout(self.timeout.as_millis() as u64)
-        })?
-        .map_err(|e| RLMError::ExecutionError(format!("Failed to execute JavaScript: {}", e)))?;
+        let mut child = Command::new("node")
+            .arg(&js_file)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| RLMError::ExecutionError(format!("Failed to spawn Node.js: {}", e)))?;
 
-        // Cleanup
-        let _ = fs::remove_file(&js_file).await;
+        let output = match tokio::time::timeout(self.timeout, child.wait_with_output()).await {
+            Ok(result) => result.map_err(|e| {
+                RLMError::ExecutionError(format!("Failed to wait for Node.js: {}", e))
+            })?,
+            Err(_) => {
+                return Err(RLMError::REPLTimeout(self.timeout.as_millis() as u64));
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();

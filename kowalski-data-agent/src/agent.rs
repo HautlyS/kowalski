@@ -24,9 +24,8 @@ pub struct DataAgent {
 
 impl DataAgent {
     /// Creates a new DataAgent with the specified configuration
-    pub async fn new(_config: Config) -> Result<Self, KowalskiError> {
-        // TODO: Convert Config to DataAgentConfig if needed
-        let data_config = DataAgentConfig::default();
+    pub async fn new(config: Config) -> Result<Self, KowalskiError> {
+        let data_config = DataAgentConfig::from(config);
         let csv_tool = CsvTool::new(data_config.max_rows, data_config.max_columns);
         let fs_tool = FsTool::new();
         let tools: Vec<Box<dyn Tool + Send + Sync>> = vec![Box::new(csv_tool), Box::new(fs_tool)];

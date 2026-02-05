@@ -35,9 +35,8 @@ pub struct PageResult {
 
 impl WebAgent {
     /// Creates a new WebAgent with the specified configuration
-    pub async fn new(_config: Config) -> Result<Self, KowalskiError> {
-        // TODO: Convert Config to WebAgentConfig if needed
-        let web_config = WebAgentConfig::default();
+    pub async fn new(config: Config) -> Result<Self, KowalskiError> {
+        let web_config = WebAgentConfig::from(config);
         let provider = web_config.search.default_provider.to_string();
         let search_tool = WebSearchTool::new(provider);
         let scrape_tool = WebScrapeTool::new();

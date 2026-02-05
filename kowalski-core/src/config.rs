@@ -6,6 +6,8 @@ use std::collections::HashMap;
 pub struct Config {
     /// Ollama configuration
     pub ollama: OllamaConfig,
+    /// Exo cluster configuration
+    pub exo: ExoConfig,
     /// Chat configuration
     pub chat: ChatConfig,
     /// Maximum number of memories to retrieve from working memory
@@ -60,6 +62,28 @@ pub struct ChatConfig {
     pub additional: HashMap<String, serde_json::Value>,
 }
 
+/// Configuration for Exo integration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExoConfig {
+    /// Base URL for Exo API
+    pub base_url: String,
+    /// Whether to enable Exo cluster integration
+    pub enable_cluster: bool,
+    /// Additional Exo-specific settings
+    #[serde(flatten)]
+    pub additional: HashMap<String, serde_json::Value>,
+}
+
+impl Default for ExoConfig {
+    fn default() -> Self {
+        Self {
+            base_url: "http://localhost:52415".to_string(),
+            enable_cluster: false,
+            additional: HashMap::new(),
+        }
+    }
+}
+
 impl Default for ChatConfig {
     fn default() -> Self {
         Self {
@@ -100,6 +124,7 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             ollama: OllamaConfig::default(),
+            exo: ExoConfig::default(),
             chat: ChatConfig::default(),
             working_memory_retrieval_limit: 3,
             episodic_memory_retrieval_limit: 3,

@@ -1,6 +1,6 @@
 # Cargo build optimization configuration
 [build]
-# Enable incremental compilation
+# Enable incremental compilation for faster rebuilds
 incremental = true
 
 # Optimized profiles
@@ -15,18 +15,22 @@ incremental = true
 lto = false
 codegen-units = 512
 split-debuginfo = "packed"
+# Enable fast builds
+debug-assertions = true
 
 [profile.release]
-# Maximum optimization for release
+# Balanced optimization for release builds
 opt-level = 2
 # Optimize for runtime performance
-lto = false
+lto = "thin"
 codegen-units = 32
 # Strip symbols to reduce binary size
 strip = false
 # Enable incremental compilation even in release
 incremental = true
 split-debuginfo = "packed"
+# Reduce bloat
+panic = "abort"
 
 [profile.release-opt]
 # Ultra-optimized profile for production, inherits from release

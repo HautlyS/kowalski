@@ -4,7 +4,12 @@
 
 use crate::config::RLMConfig;
 use crate::context::RLMContext;
+use crate::context_fold::{ContextFoldConfig, ContextFolder};
+use crate::code_block_parser::CodeBlockParser;
 use crate::error::{RLMError, RLMResult};
+use crate::exo_cluster_manager::ExoClusterManager;
+use crate::remote_repl_executor::RemoteREPLExecutor;
+use crate::repl_executor::{REPLExecutor, REPLExecutorFactory};
 use std::sync::Arc;
 
 /// Unified RLM executor combining all components
@@ -28,6 +33,7 @@ use std::sync::Arc;
 #[derive(Debug)]
 pub struct RLMExecutor {
     config: Arc<RLMConfig>,
+    exo_cluster: Option<Arc<ExoClusterManager>>,
 }
 
 impl RLMExecutor {
@@ -38,7 +44,14 @@ impl RLMExecutor {
 
         Ok(Self {
             config: Arc::new(config),
+            exo_cluster: None,
         })
+    }
+
+    /// Attach an Exo cluster manager for distributed execution.
+    pub fn with_exo_cluster(mut self, cluster: Arc<ExoClusterManager>) -> Self {
+        self.exo_cluster = Some(cluster);
+        self
     }
 
     /// Get the configuration
@@ -81,57 +94,58 @@ impl RLMExecutor {
         // Initialize with the prompt
         context.append_answer(prompt);
 
-        // RLM execution loop
-        // TODO [PRIORITY: HIGH]: Implement full RLM workflow:
-        // 1. Parse prompt for REPL code blocks (e.g., ```python ... ```)
-        //    - Extract code snippets with language identifier
-        //    - Skip non-code content
-        //
-        // 2. Execute REPL code if present
-        //    - Call REPLManager with extracted code
-        //    - Capture output and errors
-        //    - Integrate results into context
-        //
-        // 3. Check if answer needs refinement
-        //    - Use quality heuristics or LLM-based evaluation
-        //    - Decide whether refinement is needed
-        //
-        // 4. Make batch LLM calls for refinement
-        //    - Build refinement prompts
-        //    - Execute using federation's batch executor
-        //    - Integrate refined results
-        //
-        // 5. Apply context folding if context grows too large
-        //    - Check is_within_context_limits()
-        //    - Use ContextFolder to compress
-        //    - Maintain accuracy while reducing size
-        //
-        // 6. Iterate until answer is ready or max iterations reached
-        //    - Exit when quality threshold reached
-        //    - Exit when max_iterations reached
-        //    - Return final answer
+        let code_parser = CodeBlockParser::new();
+        let context_folder = ContextFolder::new(ContextFoldConfig::new(self.config.max_context_length));
 
         while !context.max_iterations_reached() {
             context.next_iteration();
 
             // Check context size and fold if needed
-            if !context.is_within_context_limits() && self.config.enable_context_folding {
-                // TODO [PRIORITY: MEDIUM]: Apply context folding implementation
-                // Currently: Just record context overflow
-                // Future: Use ContextFolder to compress context
-                // Ensure: Folded context still maintains semantic meaning
-                context.record_error("Context size exceeded, folding would be applied in full implementation");
+            let mut iteration_notes = Vec::new();
+
+            // Execute code blocks if present
+            if let Ok(blocks) = code_parser.extract_from(context.answer()) {
+                for block in blocks {
+                    let execution_result = self.execute_code_block(&block.language, &block.code).await;
+                    match execution_result {
+                        Ok(output) => {
+                            context.record_repl_execution();
+                            iteration_notes.push(format!(
+                                "\n[REPL:{} output]\n{}",
+                                block.language, output
+                            ));
+                        }
+                        Err(err) => {
+                            context.record_error(err.to_string());
+                            iteration_notes.push(format!(
+                                "\n[REPL:{} error]\n{}",
+                                block.language, err
+                            ));
+                        }
+                    }
+                }
             }
 
-            // TODO [PRIORITY: HIGH]: Perform actual RLM operations:
-            // - Extract code blocks from answer using regex or parser
-            // - Execute code if present using REPLManager
-            // - Run LLM calls for refinement if needed using federation
-            // - Check if answer is complete/acceptable
-            // Currently: Placeholder that just records iteration
-            
-            // Placeholder: Just record the iteration
-            context.append_answer(&format!("\n[Iteration {} complete]", context.iteration));
+            if !context.is_within_context_limits() && self.config.enable_context_folding {
+                match context_folder.fold(context.answer()).await {
+                    Ok(folded) => {
+                        context.clear_answer();
+                        context.append_answer(folded);
+                        iteration_notes.push("\n[Context folded]".to_string());
+                    }
+                    Err(err) => {
+                        context.record_error(err.to_string());
+                    }
+                }
+            }
+
+            if !iteration_notes.is_empty() {
+                for note in iteration_notes {
+                    context.append_answer(note);
+                }
+            } else {
+                context.append_answer(&format!("\n[Iteration {} complete]", context.iteration));
+            }
             context.record_llm_call(100);
         }
 
@@ -172,6 +186,27 @@ impl RLMExecutor {
     /// Get execution context factory
     pub fn create_context(&self, task_id: impl Into<String>) -> RLMContext {
         RLMContext::new(task_id, Arc::clone(&self.config))
+    }
+
+    async fn execute_code_block(&self, language: &str, code: &str) -> RLMResult<String> {
+        if let Some(cluster) = &self.exo_cluster {
+            if let Some(device) = cluster
+                .list_devices()
+                .await?
+                .into_iter()
+                .find(|device| device.capabilities.runtimes.contains(&language.to_string()))
+            {
+                let executor = RemoteREPLExecutor::new(
+                    Arc::clone(cluster),
+                    device.id,
+                    language.to_string(),
+                );
+                return executor.execute(code).await;
+            }
+        }
+
+        let executor = REPLExecutorFactory::create(language)?;
+        executor.execute(code).await
     }
 }
 

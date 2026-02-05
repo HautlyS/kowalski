@@ -1,6 +1,7 @@
 use crate::agent::types::{ChatRequest, StreamResponse};
 use crate::config::Config;
 use crate::conversation::Conversation;
+use crate::conversation_manager::ConversationManager;
 use crate::conversation::Message;
 use crate::error::KowalskiError;
 use crate::role::Role;
@@ -18,9 +19,10 @@ use reqwest::Response;
 use serde_json;
 use serde_json::json;
 use std::any::Any;
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::io::{self, Write};
+use std::sync::Arc;
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub mod types;
@@ -285,21 +287,23 @@ pub trait Agent: Send + Sync {
 pub struct BaseAgent {
     pub client: reqwest::Client,
     pub config: Config,
-    pub conversations: HashMap<String, Conversation>,
+    pub conversations: ConversationManager,
     pub name: String,
     pub description: String,
     pub system_prompt: Option<String>,
     // Memory Tiers
     pub working_memory: WorkingMemory,
-    pub episodic_memory: &'static tokio::sync::Mutex<kowalski_memory::episodic::EpisodicBuffer>,
-    pub semantic_memory: &'static tokio::sync::Mutex<kowalski_memory::semantic::SemanticStore>,
+    pub episodic_memory: Arc<tokio::sync::Mutex<kowalski_memory::episodic::EpisodicBuffer>>,
+    pub semantic_memory: Arc<tokio::sync::Mutex<kowalski_memory::semantic::SemanticStore>>,
 }
 
 impl BaseAgent {
     pub async fn new(config: Config, name: &str, description: &str) -> Result<Self, KowalskiError> {
         let client = reqwest::ClientBuilder::new()
             .http1_only()
-            .pool_max_idle_per_host(0)
+            .pool_max_idle_per_host(10)
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(300))
             .build()
             .map_err(KowalskiError::Request)?;
 
@@ -323,7 +327,7 @@ impl BaseAgent {
         Ok(Self {
             client,
             config,
-            conversations: HashMap::new(),
+            conversations: ConversationManager::new(100),
             name: name.to_string(),
             description: description.to_string(),
             system_prompt: None,
@@ -361,7 +365,7 @@ impl Agent for BaseAgent {
     }
 
     fn list_conversations(&self) -> Vec<&Conversation> {
-        self.conversations.values().collect()
+        self.conversations.list_all()
     }
 
     fn delete_conversation(&mut self, id: &str) -> bool {

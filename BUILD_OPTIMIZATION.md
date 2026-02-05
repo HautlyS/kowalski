@@ -29,31 +29,56 @@ cargo build --profile ci
 ```
 Uses `ci` profile with moderate optimization and fast compilation.
 
+### Build Only kowalski-rlm (Fast Incremental)
+For faster builds of just the RLM package without rebuilding the entire workspace:
+```bash
+# Debug build (fastest)
+cargo build --package kowalski-rlm
+
+# Release build (recommended)
+cargo build --package kowalski-rlm --release
+
+# Using Make (recommended)
+make build-rlm              # Debug
+make build-rlm-release      # Release
+
+# Using build script
+./build.sh -p kowalski-rlm --release
+```
+
+**Note**: See [CARGO_BUILD_CACHING_GUIDE.md](CARGO_BUILD_CACHING_GUIDE.md) for detailed information on incremental compilation and package-specific builds.
+
 ## Key Optimizations Enabled
 
 ### 1. Incremental Compilation
 - **Setting**: `incremental = true` in `.cargo/config.toml`
 - **Benefit**: Only recompiles changed code and dependencies, not the entire project
 - **Default**: Automatically enabled for all profiles
+- **Package-specific builds**: Use `cargo build --package kowalski-rlm` to skip unrelated crates
 
-### 2. Parallel Compilation
+### 2. Pipelined Compilation
+- **Benefit**: Modern Cargo versions automatically use pipelined compilation
+- **Impact**: Compiles different crates in parallel, overlapping compilation and linking phases
+- **Status**: Enabled by default in recent Rust versions
+
+### 3. Parallel Compilation
 - **Setting**: `jobs = 0` (uses all CPU cores)
 - **Benefit**: Distributes compilation across all available processor cores
 - **Impact**: Significant speedup on multi-core systems
 
-### 3. Profile-Specific Optimization
-- **dev**: `opt-level = 1`, fast compilation for development
-- **release**: `opt-level = 3`, balanced optimization with `lto = "thin"`
+### 4. Profile-Specific Optimization
+- **dev**: `opt-level = 0`, fast compilation for development
+- **release**: `opt-level = 2`, balanced optimization with `lto = "thin"`
 - **release-opt**: `opt-level = 3`, maximum optimization with `lto = "fat"`
 
-### 4. Link-Time Optimization (LTO)
+### 5. Link-Time Optimization (LTO)
 - **dev**: Disabled (too slow for development)
 - **release**: Thin LTO (good balance of build time vs performance)
 - **release-opt**: Full LTO (maximum optimization for production)
 
-### 5. Code Generation Units
-- **dev/ci**: `codegen-units = 256` (many small units = faster compilation)
-- **release**: `codegen-units = 16` (fewer units = better optimization)
+### 6. Code Generation Units
+- **dev**: `codegen-units = 512` (many small units = faster compilation)
+- **release**: `codegen-units = 32` (fewer units = better optimization)
 - **release-opt**: `codegen-units = 1` (single unit = maximum optimization)
 
 ## Cache Management

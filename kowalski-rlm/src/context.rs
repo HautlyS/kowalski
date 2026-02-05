@@ -49,12 +49,30 @@ pub struct ExecutionMetadata {
     /// Total tokens used (estimated)
     pub total_tokens: usize,
 
-    /// Errors encountered
+    /// Last 50 errors (bounded to prevent unbounded growth)
     pub errors: Vec<String>,
+
+    /// Total number of errors encountered (for monitoring)
+    pub error_count: usize,
 
     /// Custom metadata
     #[serde(default)]
     pub custom: std::collections::HashMap<String, String>,
+}
+
+impl ExecutionMetadata {
+    /// Add an error with bounded storage
+    /// Only keeps the last 50 errors to prevent memory leaks
+    pub fn add_error(&mut self, error: String) {
+        const MAX_ERRORS: usize = 50;
+        self.error_count += 1;
+        self.errors.push(error);
+        
+        // Keep only last 50 errors
+        if self.errors.len() > MAX_ERRORS {
+            self.errors.drain(0..self.errors.len() - MAX_ERRORS);
+        }
+    }
 }
 
 impl RLMContext {
@@ -125,8 +143,11 @@ impl RLMContext {
     /// Note: Recording an error does not automatically halt execution.
     /// The executor or caller should check `metadata.errors` to decide
     /// whether to continue or abort the workflow.
+    ///
+    /// Errors are stored with a maximum of 50 most recent to prevent
+    /// memory leaks in long-running workflows.
     pub fn record_error(&mut self, error: impl Into<String>) {
-        self.metadata.errors.push(error.into());
+        self.metadata.add_error(error.into());
         self.last_activity = Utc::now();
     }
 
@@ -265,7 +286,27 @@ mod tests {
         assert_eq!(ctx.metadata.llm_calls, 1);
         assert_eq!(ctx.metadata.total_tokens, 100);
         assert_eq!(ctx.metadata.errors.len(), 1);
+        assert_eq!(ctx.metadata.error_count, 1);
         assert_eq!(ctx.metadata.custom.get("key").map(|s| s.as_str()), Some("value"));
+    }
+
+    #[test]
+    fn test_error_vector_bounding() {
+        let config = Arc::new(RLMConfig::default());
+        let mut ctx = RLMContext::new("task-1", config);
+        
+        // Add 100 errors
+        for i in 0..100 {
+            ctx.record_error(format!("Error {}", i));
+        }
+        
+        // Should only keep last 50
+        assert_eq!(ctx.metadata.errors.len(), 50);
+        assert_eq!(ctx.metadata.error_count, 100);
+        
+        // Should keep last errors (50-99)
+        assert!(ctx.metadata.errors[0].contains("Error 50"));
+        assert!(ctx.metadata.errors[49].contains("Error 99"));
     }
 
     #[test]

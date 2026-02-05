@@ -23,9 +23,8 @@ pub struct AcademicAgent {
 
 impl AcademicAgent {
     /// Creates a new AcademicAgent with the specified configuration
-    pub async fn new(_config: Config) -> Result<Self, KowalskiError> {
-        // TODO: Convert Config to AcademicAgentConfig if needed
-        let academic_config = AcademicAgentConfig::default();
+    pub async fn new(config: Config) -> Result<Self, KowalskiError> {
+        let academic_config = AcademicAgentConfig::from(config);
         let search_tool = WebSearchTool::new("duckduckgo".to_string());
         let pdf_tool = PdfTool;
         let fs_tool = FsTool::new();

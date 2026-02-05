@@ -1,5 +1,7 @@
 use crate::FederationError;
 use std::time::Duration;
+use std::time::Instant;
+use tokio::sync::Semaphore;
 use serde::{Deserialize, Serialize};
 
 /// Result of a single LLM call in a batch
@@ -110,13 +112,42 @@ impl BatchLLMResponse {
 /// }
 /// ```
 pub struct BatchExecutor {
-    // Configuration will be added in Phase 2a
+    client: reqwest::Client,
+    semaphore: Semaphore,
+    max_concurrent: usize,
 }
 
 impl BatchExecutor {
     /// Creates a new batch executor with default configuration
     pub fn new() -> Self {
-        Self {}
+        let client = reqwest::ClientBuilder::new()
+            .pool_max_idle_per_host(10)
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(300))
+            .build()
+            .expect("Failed to create HTTP client");
+        
+        Self {
+            client,
+            semaphore: Semaphore::new(10),
+            max_concurrent: 10,
+        }
+    }
+
+    /// Creates a new batch executor with custom concurrency
+    pub fn with_concurrency(max_concurrent: usize) -> Self {
+        let client = reqwest::ClientBuilder::new()
+            .pool_max_idle_per_host(10)
+            .connect_timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(300))
+            .build()
+            .expect("Failed to create HTTP client");
+        
+        Self {
+            client,
+            semaphore: Semaphore::new(max_concurrent),
+            max_concurrent,
+        }
     }
 
     /// Executes a batch of LLM requests in parallel
@@ -129,27 +160,244 @@ impl BatchExecutor {
     /// The batch response with results in the same order as input
     pub async fn execute(
         &self,
-        _request: BatchLLMRequest,
-        _timeout: Duration,
+        request: BatchLLMRequest,
+        timeout: Duration,
     ) -> Result<BatchLLMResponse, FederationError> {
-        // Placeholder - will be implemented in Phase 2a
-        Err(FederationError::ExecutionError(
-            "Batch executor not yet implemented".to_string(),
-        ))
+        let start_time = Instant::now();
+        let mut results = Vec::with_capacity(request.prompts.len());
+        let mut total_tokens = usize::default();
+        let mut all_succeeded = true;
+
+        for (index, prompt) in request.prompts.iter().enumerate() {
+            let permit = self.semaphore.acquire().await;
+            let _guard = permit;
+
+            let call_start = Instant::now();
+            
+            let result = tokio::time::timeout(
+                timeout,
+                self.execute_single_prompt(prompt, &request.model, request.temperature, request.max_tokens)
+            ).await;
+
+            let _elapsed_ms = call_start.elapsed().as_millis();
+
+            let call_result = match result {
+                Ok(Ok(response)) => {
+                    total_tokens += response.tokens_used;
+                    BatchCallResult {
+                        index,
+                        prompt: prompt.clone(),
+                        response: response.content,
+                        tokens_used: response.tokens_used,
+                        success: true,
+                        error: None,
+                    }
+                }
+                Ok(Err(FederationError::Timeout(_))) => {
+                    all_succeeded = false;
+                    BatchCallResult {
+                        index,
+                        prompt: prompt.clone(),
+                        response: String::new(),
+                        tokens_used: 0,
+                        success: false,
+                        error: Some("Request timed out".to_string()),
+                    }
+                }
+                Ok(Err(e)) => {
+                    all_succeeded = false;
+                    BatchCallResult {
+                        index,
+                        prompt: prompt.clone(),
+                        response: String::new(),
+                        tokens_used: 0,
+                        success: false,
+                        error: Some(e.to_string()),
+                    }
+                }
+                Err(_) => {
+                    all_succeeded = false;
+                    BatchCallResult {
+                        index,
+                        prompt: prompt.clone(),
+                        response: String::new(),
+                        tokens_used: 0,
+                        success: false,
+                        error: Some("Request timed out".to_string()),
+                    }
+                }
+            };
+
+            results.push(call_result);
+        }
+
+        Ok(BatchLLMResponse {
+            results,
+            total_tokens,
+            duration_ms: start_time.elapsed().as_millis() as u64,
+            all_succeeded,
+        })
     }
 
     /// Executes with rate limiting (maximum calls per second)
     pub async fn execute_rate_limited(
         &self,
-        _request: BatchLLMRequest,
-        _timeout: Duration,
-        _max_calls_per_sec: usize,
+        request: BatchLLMRequest,
+        timeout: Duration,
+        max_calls_per_sec: usize,
     ) -> Result<BatchLLMResponse, FederationError> {
-        // Placeholder - will be implemented in Phase 2a
-        Err(FederationError::ExecutionError(
-            "Rate limited execution not yet implemented".to_string(),
-        ))
+        let start_time = Instant::now();
+        let mut results = Vec::with_capacity(request.prompts.len());
+        let mut total_tokens = usize::default();
+        let mut all_succeeded = true;
+        let interval = Duration::from_secs(1) / max_calls_per_sec.max(1) as u32;
+
+        for (index, prompt) in request.prompts.iter().enumerate() {
+            let permit = self.semaphore.acquire().await;
+            let _guard = permit;
+
+            tokio::time::sleep(interval).await;
+
+            let result = tokio::time::timeout(
+                timeout,
+                self.execute_single_prompt(prompt, &request.model, request.temperature, request.max_tokens)
+            ).await;
+
+            let call_result = match result {
+                Ok(Ok(response)) => {
+                    total_tokens += response.tokens_used;
+                    BatchCallResult {
+                        index,
+                        prompt: prompt.clone(),
+                        response: response.content,
+                        tokens_used: response.tokens_used,
+                        success: true,
+                        error: None,
+                    }
+                }
+                Ok(Err(FederationError::Timeout(_))) => {
+                    all_succeeded = false;
+                    BatchCallResult {
+                        index,
+                        prompt: prompt.clone(),
+                        response: String::new(),
+                        tokens_used: 0,
+                        success: false,
+                        error: Some("Request timed out".to_string()),
+                    }
+                }
+                Ok(Err(e)) => {
+                    all_succeeded = false;
+                    BatchCallResult {
+                        index,
+                        prompt: prompt.clone(),
+                        response: String::new(),
+                        tokens_used: 0,
+                        success: false,
+                        error: Some(e.to_string()),
+                    }
+                }
+                Err(_) => {
+                    all_succeeded = false;
+                    BatchCallResult {
+                        index,
+                        prompt: prompt.clone(),
+                        response: String::new(),
+                        tokens_used: 0,
+                        success: false,
+                        error: Some("Request timed out".to_string()),
+                    }
+                }
+            };
+
+            results.push(call_result);
+        }
+
+        Ok(BatchLLMResponse {
+            results,
+            total_tokens,
+            duration_ms: start_time.elapsed().as_millis() as u64,
+            all_succeeded,
+        })
     }
+
+    /// Execute a single prompt with retry logic
+    async fn execute_single_prompt(
+        &self,
+        prompt: &str,
+        model: &str,
+        temperature: f32,
+        max_tokens: usize,
+    ) -> Result<SingleLLMResponse, FederationError> {
+        const MAX_RETRIES: usize = 3;
+        let mut last_error = None;
+
+        for attempt in 0..MAX_RETRIES {
+            let request = serde_json::json!({
+                "model": model,
+                "prompt": prompt,
+                "stream": false,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+            });
+
+            let response = self.client
+                .post("http://127.0.0.1:11434/api/generate")
+                .json(&request)
+                .send()
+                .await;
+
+            match response {
+                Ok(resp) => {
+                    if resp.status().is_success() {
+                        if let Ok(body) = resp.text().await {
+                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&body) {
+                                if let Some(response_str) = json.get("response").and_then(|v| v.as_str()) {
+                                    return Ok(SingleLLMResponse {
+                                        content: response_str.to_string(),
+                                        tokens_used: self.estimate_tokens(response_str),
+                                    });
+                                }
+                            }
+                        }
+                    } else if attempt < MAX_RETRIES - 1 {
+                        last_error = Some(FederationError::ExecutionError(
+                            format!("HTTP error: {}", resp.status())
+                        ));
+                        tokio::time::sleep(Duration::from_millis(100 * (attempt + 1) as u64)).await;
+                        continue;
+                    }
+                }
+                Err(e) if attempt < MAX_RETRIES - 1 => {
+                    last_error = Some(FederationError::ExecutionError(
+                        format!("Request failed: {}", e)
+                    ));
+                    tokio::time::sleep(Duration::from_millis(100 * (attempt + 1) as u64)).await;
+                    continue;
+                }
+                Err(e) => return Err(FederationError::ExecutionError(
+                    format!("Request failed after {} retries: {}", MAX_RETRIES, e)
+                )),
+            }
+        }
+
+        Err(last_error.unwrap_or(FederationError::ExecutionError(
+            "All retries exhausted".to_string()
+        )))
+    }
+
+    /// Estimate token count from text (conservative heuristic)
+    fn estimate_tokens(&self, text: &str) -> usize {
+        let words = text.split_whitespace().count();
+        let chars = text.chars().count();
+        (words + (chars / 4)).max(1)
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SingleLLMResponse {
+    content: String,
+    tokens_used: usize,
 }
 
 impl Default for BatchExecutor {

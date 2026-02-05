@@ -1,7 +1,7 @@
 [package]
 name = "kowalski-federation"
 version = "0.5.2"
-edition = "2024"
+edition = "2021"
 description = "Kowalski Federation: A Rust-based agent for interacting with Ollama models"
 license = "MIT"
 authors = ["yarenty <yarenty@gmail.com>"]
@@ -30,6 +30,7 @@ async-trait = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
+reqwest = { workspace = true }
 
 
 

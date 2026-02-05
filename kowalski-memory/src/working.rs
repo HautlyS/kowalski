@@ -45,8 +45,7 @@ impl MemoryProvider for WorkingMemory {
     ///
     /// If the memory is at capacity, the oldest unit is removed to make space.
     async fn add(&mut self, memory: MemoryUnit) -> Result<(), String> {
-        info!("[WorkingMemory] Adding memory unit: {}", memory.id);
-        debug!("Adding memory unit to working memory: {}", memory.id);
+        debug!("[WorkingMemory] Adding memory unit: {}", memory.id);
         if self.store.len() == self.capacity {
             let removed = self.store.remove(0);
             debug!(
@@ -65,10 +64,7 @@ impl MemoryProvider for WorkingMemory {
         query: &str,
         retrieval_limit: usize,
     ) -> Result<Vec<MemoryUnit>, String> {
-        info!("[WorkingMemory][RETRIEVE] Query: '{}'", query);
-        for unit in &self.store {
-            info!("[WorkingMemory][RETRIEVE] Stored: '{}'", unit.content);
-        }
+        debug!("[WorkingMemory][RETRIEVE] Query: '{}'", query);
         let lower_query = query.to_lowercase().trim().to_string();
         let query_words: Vec<&str> = lower_query.split_whitespace().collect();
         let mut results = Vec::new();
@@ -105,7 +101,7 @@ mod tests {
     fn create_test_unit(content: &str) -> MemoryUnit {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
         MemoryUnit {
             id: uuid::Uuid::new_v4().to_string(),

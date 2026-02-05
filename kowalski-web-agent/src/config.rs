@@ -40,6 +40,15 @@ impl ConfigExt for WebAgentConfig {
     }
 }
 
+impl From<CoreConfig> for WebAgentConfig {
+    fn from(core: CoreConfig) -> Self {
+        Self {
+            core,
+            ..Default::default()
+        }
+    }
+}
+
 /// Configuration for web search functionality
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchConfig {

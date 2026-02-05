@@ -1,9 +1,11 @@
 use kowalski_agent_template::config::TemplateAgentConfig;
-use kowalski_core::config::Config;
+use kowalski_core::config::{Config as CoreConfig, ConfigExt};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CodeAgentConfig {
+    /// Core configuration
+    core: CoreConfig,
     /// Base template configuration
     pub template: TemplateAgentConfig,
 
@@ -152,9 +154,20 @@ pub struct CodeAgentConfig {
     pub enable_verifiability: bool,
 }
 
+impl ConfigExt for CodeAgentConfig {
+    fn core(&self) -> &CoreConfig {
+        &self.core
+    }
+
+    fn core_mut(&mut self) -> &mut CoreConfig {
+        &mut self.core
+    }
+}
+
 impl Default for CodeAgentConfig {
     fn default() -> Self {
         Self {
+            core: CoreConfig::default(),
             template: TemplateAgentConfig::default(),
             max_file_size: 1024 * 1024, // 1MB
             max_files_per_operation: 100,
@@ -208,10 +221,11 @@ impl Default for CodeAgentConfig {
     }
 }
 
-impl From<Config> for CodeAgentConfig {
-    fn from(config: Config) -> Self {
+impl From<CoreConfig> for CodeAgentConfig {
+    fn from(core: CoreConfig) -> Self {
         Self {
-            template: TemplateAgentConfig::from(config),
+            template: TemplateAgentConfig::from(core.clone()),
+            core,
             ..Default::default()
         }
     }

@@ -1,6 +1,7 @@
 pub mod agent;
 pub mod config;
 pub mod conversation;
+pub mod conversation_manager;
 pub mod error;
 pub mod logging;
 pub mod model;
@@ -12,6 +13,7 @@ pub mod tools;
 pub use agent::*;
 pub use config::*;
 // pub use conversation::*; // Remove this to avoid ToolCall ambiguity
+pub use conversation_manager::ConversationManager;
 pub use error::KowalskiError;
 pub use logging::*;
 pub use model::ModelManager;

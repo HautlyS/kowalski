@@ -1,6 +1,6 @@
-use regex::Regex;
-use crate::error::{RLMError, RLMResult};
+use crate::error::RLMResult;
 use lazy_static::lazy_static;
+use regex::Regex;
 
 /// Represents a parsed code block with language and code content
 #[derive(Debug, Clone)]
@@ -18,15 +18,15 @@ pub struct CodeBlockParser {
 
 lazy_static! {
     // Matches ```language\ncode\n```
-    static ref MARKDOWN_FENCE: Regex = 
+    static ref MARKDOWN_FENCE: Regex =
         Regex::new(r"```([^\n]*)\n([\s\S]*?)```").unwrap();
-    
+
     // Matches ~~~language\ncode\n~~~
-    static ref TILDE_FENCE: Regex = 
+    static ref TILDE_FENCE: Regex =
         Regex::new(r"~~~([^\n]*)\n([\s\S]*?)~~~").unwrap();
-    
+
     // Matches indented code blocks (4 spaces or tab)
-    static ref INDENTED_CODE: Regex = 
+    static ref INDENTED_CODE: Regex =
         Regex::new(r"(?:^|\n)((?:    |\t)[^\n]*(?:\n(?:    |\t)[^\n]*)*)").unwrap();
 }
 
@@ -108,7 +108,7 @@ impl CodeBlockParser {
     /// Detect language from code hint string
     pub fn detect_language(&self, hint: &str) -> Option<String> {
         let hint = hint.trim().to_lowercase();
-        
+
         if self.is_supported_language(&hint) {
             Some(self.normalize_language(&hint))
         } else {
@@ -163,7 +163,7 @@ mod tests {
         let parser = CodeBlockParser::new();
         let text = "Here's Python code:\n```python\nprint('hello')\n```";
         let blocks = parser.extract_from(text).unwrap();
-        
+
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].language, "python");
         assert_eq!(blocks[0].code, "print('hello')");
@@ -184,7 +184,7 @@ fn main() {}
 ```
 "#;
         let blocks = parser.extract_from(text).unwrap();
-        
+
         assert_eq!(blocks.len(), 2);
         assert_eq!(blocks[0].language, "python");
         assert_eq!(blocks[1].language, "rust");
@@ -195,7 +195,7 @@ fn main() {}
         let parser = CodeBlockParser::new();
         let text = "```rust\nfn main() { println!(\"hi\"); }\n```";
         let blocks = parser.extract_from(text).unwrap();
-        
+
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].language, "rust");
         assert!(blocks[0].code.contains("main"));
@@ -206,7 +206,7 @@ fn main() {}
         let parser = CodeBlockParser::new();
         let text = "```java\npublic class Hello {}\n```";
         let blocks = parser.extract_from(text).unwrap();
-        
+
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].language, "java");
     }
@@ -216,7 +216,7 @@ fn main() {}
         let parser = CodeBlockParser::new();
         let text = "```javascript\nconst x = 1;\n```";
         let blocks = parser.extract_from(text).unwrap();
-        
+
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].language, "javascript");
     }
@@ -226,7 +226,7 @@ fn main() {}
         let parser = CodeBlockParser::new();
         let text = "```bash\necho hello\n```";
         let blocks = parser.extract_from(text).unwrap();
-        
+
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].language, "bash");
     }
@@ -236,7 +236,7 @@ fn main() {}
         let parser = CodeBlockParser::new();
         let text = "~~~python\nx = 1\n~~~";
         let blocks = parser.extract_from(text).unwrap();
-        
+
         assert_eq!(blocks.len(), 1);
         assert_eq!(blocks[0].language, "python");
     }
@@ -244,11 +244,14 @@ fn main() {}
     #[test]
     fn test_normalize_language() {
         let parser = CodeBlockParser::new();
-        
+
         assert_eq!(parser.detect_language("Python"), Some("python".to_string()));
         assert_eq!(parser.detect_language("PY"), Some("python".to_string()));
         assert_eq!(parser.detect_language("Rust"), Some("rust".to_string()));
-        assert_eq!(parser.detect_language("JavaScript"), Some("javascript".to_string()));
+        assert_eq!(
+            parser.detect_language("JavaScript"),
+            Some("javascript".to_string())
+        );
         assert_eq!(parser.detect_language("JS"), Some("javascript".to_string()));
     }
 
@@ -257,7 +260,7 @@ fn main() {}
         let parser = CodeBlockParser::new();
         let text = "```c++\nint x = 1;\n```";
         let blocks = parser.extract_from(text).unwrap();
-        
+
         // C++ is not supported, so no blocks should be extracted
         assert_eq!(blocks.len(), 0);
     }
@@ -270,7 +273,7 @@ s = "This has ``` in it"
 print(s)
 ```"#;
         let blocks = parser.extract_from(text).unwrap();
-        
+
         assert_eq!(blocks.len(), 1);
         assert!(blocks[0].code.contains("```"));
     }
@@ -280,7 +283,7 @@ print(s)
         let parser = CodeBlockParser::new();
         let text = "```python\n```";
         let blocks = parser.extract_from(text).unwrap();
-        
+
         assert_eq!(blocks.len(), 1);
         assert!(blocks[0].code.is_empty() || blocks[0].code.trim().is_empty());
     }
@@ -290,7 +293,7 @@ print(s)
         let parser = CodeBlockParser::new();
         let text = "Just plain text with no code blocks";
         let blocks = parser.extract_from(text).unwrap();
-        
+
         assert_eq!(blocks.len(), 0);
     }
 }
