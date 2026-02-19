@@ -5,6 +5,7 @@ pub mod conversation_manager;
 pub mod error;
 pub mod logging;
 pub mod model;
+pub mod providers;
 pub mod role;
 pub mod rlm;
 pub mod tool_chain;
@@ -12,12 +13,12 @@ pub mod tools;
 
 pub use agent::*;
 pub use config::*;
-// pub use conversation::*; // Remove this to avoid ToolCall ambiguity
 pub use conversation_manager::ConversationManager;
 pub use error::KowalskiError;
 pub use logging::*;
 pub use model::ModelManager;
 pub use model::*;
+pub use providers::OpenRouterClient;
 pub use rlm::{AnswerBuffer, RLMConfig, RLMEnvironment, EnvironmentTips};
 pub use role::{Audience, Preset, Role, Style};
 pub use tool_chain::*;

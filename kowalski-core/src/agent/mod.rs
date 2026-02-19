@@ -1,9 +1,10 @@
 use crate::agent::types::{ChatRequest, StreamResponse};
-use crate::config::Config;
+use crate::config::{Config, Provider};
 use crate::conversation::Conversation;
 use crate::conversation_manager::ConversationManager;
 use crate::conversation::Message;
 use crate::error::KowalskiError;
+use crate::providers::OpenRouterClient;
 use crate::role::Role;
 use crate::tools::{ToolCall, ToolOutput};
 use async_trait::async_trait;
@@ -283,7 +284,6 @@ pub trait Agent: Send + Sync {
     fn as_any(&self) -> &dyn Any;
 }
 
-/// The base agent implementation that provides common functionality.
 pub struct BaseAgent {
     pub client: reqwest::Client,
     pub config: Config,
@@ -291,10 +291,10 @@ pub struct BaseAgent {
     pub name: String,
     pub description: String,
     pub system_prompt: Option<String>,
-    // Memory Tiers
     pub working_memory: WorkingMemory,
     pub episodic_memory: Arc<tokio::sync::Mutex<kowalski_memory::episodic::EpisodicBuffer>>,
     pub semantic_memory: Arc<tokio::sync::Mutex<kowalski_memory::semantic::SemanticStore>>,
+    openrouter_client: Option<OpenRouterClient>,
 }
 
 impl BaseAgent {
@@ -307,10 +307,9 @@ impl BaseAgent {
             .build()
             .map_err(KowalskiError::Request)?;
 
-        info!("BaseAgent created with name: {}", name);
+        info!("BaseAgent created with name: {} (provider: {:?})", name, config.provider);
 
-        // Initialize memory tiers
-        let working_memory = WorkingMemory::new(100); // Capacity of 100 units
+        let working_memory = WorkingMemory::new(100);
         let episodic_memory =
             kowalski_memory::episodic::get_or_init_episodic_buffer("./db/episodic_buffer")
                 .await
@@ -324,6 +323,21 @@ impl BaseAgent {
                     KowalskiError::Initialization(format!("Failed to init semantic store: {}", e))
                 })?;
 
+        let openrouter_client = match &config.provider {
+            Provider::OpenRouter => {
+                let api_key = config.openrouter.api_key.clone()
+                    .ok_or_else(|| KowalskiError::Initialization(
+                        "OpenRouter API key not set. Set OPENROUTER_API_KEY env var or config.openrouter.api_key".to_string()
+                    ))?;
+                Some(OpenRouterClient::new(
+                    api_key,
+                    Some(config.openrouter.base_url.clone()),
+                    Some(config.openrouter.default_model.clone()),
+                )?)
+            }
+            _ => None,
+        };
+
         Ok(Self {
             client,
             config,
@@ -334,6 +348,7 @@ impl BaseAgent {
             working_memory,
             episodic_memory,
             semantic_memory,
+            openrouter_client,
         })
     }
 
@@ -378,7 +393,6 @@ impl Agent for BaseAgent {
         content: &str,
         role: Option<Role>,
     ) -> Result<Response, KowalskiError> {
-        // Retrieve from all memory tiers
         let working_memories = self
             .working_memory
             .retrieve(content, self.config.working_memory_retrieval_limit)
@@ -413,7 +427,6 @@ impl Agent for BaseAgent {
             semantic_memories.len()
         );
 
-        // Combine all memories, deduplicate by id
         let mut seen_ids = HashSet::new();
         let mut all_memories = Vec::new();
         for m in working_memories
@@ -459,35 +472,63 @@ impl Agent for BaseAgent {
             }
         }
 
-        // Inject memories into the user's message
         let content_with_memory = format!("{}{}", content, memory_context);
         conversation.add_message("user", &content_with_memory);
 
-        let request = ChatRequest {
-            model: conversation.model.clone(),
-            messages: conversation.messages.clone(),
-            stream: true,
-            temperature: self.config.chat.temperature,
-            max_tokens: self.config.chat.max_tokens as usize,
-            tools: None,
-        };
+        let model = conversation.model.clone();
+        let messages: Vec<crate::providers::openrouter::Message> = conversation
+            .messages
+            .iter()
+            .map(|m| crate::providers::openrouter::Message {
+                role: m.role.clone(),
+                content: m.content.clone(),
+            })
+            .collect();
 
-        let response = self
-            .client
-            .post(format!(
-                "http://{}:{}/api/chat",
-                self.config.ollama.host, self.config.ollama.port
-            ))
-            .json(&request)
-            .send()
-            .await?;
+        match self.config.provider {
+            Provider::OpenRouter => {
+                let openrouter = self.openrouter_client.as_ref()
+                    .ok_or_else(|| KowalskiError::Server("OpenRouter client not initialized".to_string()))?;
 
-        if !response.status().is_success() {
-            let error_text = response.text().await?;
-            return Err(KowalskiError::Server(error_text));
+                openrouter
+                    .chat_stream(
+                        messages,
+                        Some(&model),
+                        Some(self.config.chat.temperature),
+                        Some(self.config.chat.max_tokens as usize),
+                    )
+                    .await
+            }
+            Provider::Ollama | Provider::Exo => {
+                let request = ChatRequest {
+                    model: model.clone(),
+                    messages: self.conversations.get(conversation_id)
+                        .map(|c| c.messages.clone())
+                        .unwrap_or_default(),
+                    stream: true,
+                    temperature: self.config.chat.temperature,
+                    max_tokens: self.config.chat.max_tokens as usize,
+                    tools: None,
+                };
+
+                let response = self
+                    .client
+                    .post(format!(
+                        "http://{}:{}/api/chat",
+                        self.config.ollama.host, self.config.ollama.port
+                    ))
+                    .json(&request)
+                    .send()
+                    .await?;
+
+                if !response.status().is_success() {
+                    let error_text = response.text().await?;
+                    return Err(KowalskiError::Server(error_text));
+                }
+
+                Ok(response)
+            }
         }
-
-        Ok(response)
     }
 
     async fn process_stream_response(
@@ -498,14 +539,36 @@ impl Agent for BaseAgent {
         let text = String::from_utf8(chunk.to_vec())
             .map_err(|e| KowalskiError::Server(format!("Invalid UTF-8: {}", e)))?;
 
-        let stream_response: StreamResponse =
-            serde_json::from_str(&text).map_err(KowalskiError::Json)?;
+        match self.config.provider {
+            Provider::OpenRouter => {
+                let openrouter = self.openrouter_client.as_ref()
+                    .ok_or_else(|| KowalskiError::Server("OpenRouter client not initialized".to_string()))?;
+                
+                match openrouter.parse_stream_chunk(chunk) {
+                    Ok(Some(stream_response)) => {
+                        if stream_response.done {
+                            return Ok(None);
+                        }
+                        Ok(Some(stream_response.message))
+                    }
+                    Ok(None) => Ok(None),
+                    Err(e) => {
+                        debug!("Failed to parse OpenRouter chunk: {}", e);
+                        Ok(None)
+                    }
+                }
+            }
+            Provider::Ollama | Provider::Exo => {
+                let stream_response: StreamResponse =
+                    serde_json::from_str(&text).map_err(KowalskiError::Json)?;
 
-        if stream_response.done {
-            return Ok(None);
+                if stream_response.done {
+                    return Ok(None);
+                }
+
+                Ok(Some(stream_response.message))
+            }
         }
-
-        Ok(Some(stream_response.message))
     }
 
     async fn add_message(&mut self, conversation_id: &str, role: &str, content: &str) {

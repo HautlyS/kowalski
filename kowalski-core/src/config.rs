@@ -1,23 +1,73 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Core configuration for the Kowalski system
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenRouterConfig {
+    pub api_key: Option<String>,
+    pub default_model: String,
+    pub base_url: String,
+    pub site_url: Option<String>,
+    pub site_name: Option<String>,
+}
+
+impl Default for OpenRouterConfig {
+    fn default() -> Self {
+        Self {
+            api_key: None,
+            default_model: "anthropic/claude-sonnet-4".to_string(),
+            base_url: "https://openrouter.ai/api/v1".to_string(),
+            site_url: Some("https://github.com/yarenty/kowalski".to_string()),
+            site_name: Some("Kowalski".to_string()),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Provider {
+    Ollama,
+    OpenRouter,
+    Exo,
+}
+
+impl Default for Provider {
+    fn default() -> Self {
+        Self::Ollama
+    }
+}
+
+impl std::fmt::Display for Provider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Provider::Ollama => write!(f, "ollama"),
+            Provider::OpenRouter => write!(f, "openrouter"),
+            Provider::Exo => write!(f, "exo"),
+        }
+    }
+}
+
+impl std::str::FromStr for Provider {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "ollama" => Ok(Provider::Ollama),
+            "openrouter" => Ok(Provider::OpenRouter),
+            "exo" => Ok(Provider::Exo),
+            _ => Err(format!("Unknown provider: {}", s)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Config {
-    /// Ollama configuration
+    pub provider: Provider,
     pub ollama: OllamaConfig,
-    /// Exo cluster configuration
+    pub openrouter: OpenRouterConfig,
     pub exo: ExoConfig,
-    /// Chat configuration
     pub chat: ChatConfig,
-    /// Maximum number of memories to retrieve from working memory
     pub working_memory_retrieval_limit: usize,
-    /// Maximum number of memories to retrieve from episodic memory
     pub episodic_memory_retrieval_limit: usize,
-    /// Maximum number of memories to retrieve from semantic memory
     pub semantic_memory_retrieval_limit: usize,
-    /// Additional configurations from other agents
-    #[serde(flatten)]
     pub additional: HashMap<String, serde_json::Value>,
 }
 
@@ -123,13 +173,62 @@ pub trait ConfigExt {
 impl Default for Config {
     fn default() -> Self {
         Self {
+            provider: Provider::Ollama,
             ollama: OllamaConfig::default(),
+            openrouter: OpenRouterConfig::default(),
             exo: ExoConfig::default(),
             chat: ChatConfig::default(),
             working_memory_retrieval_limit: 3,
             episodic_memory_retrieval_limit: 3,
             semantic_memory_retrieval_limit: 3,
             additional: HashMap::new(),
+        }
+    }
+}
+
+impl Config {
+    pub fn effective_model(&self) -> String {
+        match self.provider {
+            Provider::Ollama => self.ollama.model.clone(),
+            Provider::OpenRouter => self.openrouter.default_model.clone(),
+            Provider::Exo => self.ollama.model.clone(),
+        }
+    }
+
+    pub fn with_openrouter(api_key: String, model: Option<String>) -> Self {
+        let mut config = Self::default();
+        config.provider = Provider::OpenRouter;
+        config.openrouter.api_key = Some(api_key);
+        if let Some(m) = model {
+            config.openrouter.default_model = m;
+        }
+        config
+    }
+
+    pub fn apply_env_overrides(&mut self) {
+        if let Ok(key) = std::env::var("OPENROUTER_API_KEY") {
+            if !key.is_empty() {
+                self.openrouter.api_key = Some(key);
+            }
+        }
+        if let Ok(provider) = std::env::var("KOWALSKI_PROVIDER") {
+            if let Ok(p) = provider.parse::<Provider>() {
+                self.provider = p;
+            }
+        }
+        if let Ok(model) = std::env::var("KOWALSKI_MODEL") {
+            if !model.is_empty() {
+                match self.provider {
+                    Provider::Ollama => self.ollama.model = model,
+                    Provider::OpenRouter => self.openrouter.default_model = model,
+                    Provider::Exo => self.ollama.model = model,
+                }
+            }
+        }
+        if let Ok(model) = std::env::var("OLLAMA_MODEL") {
+            if !model.is_empty() {
+                self.ollama.model = model;
+            }
         }
     }
 }

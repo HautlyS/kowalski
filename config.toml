@@ -1,6 +1,16 @@
+# Provider: ollama, openrouter, or exo
+provider = "ollama"
+
 [ollama]
-base_url = "http://127.0.0.1:11434"
-default_model = "mistral-small"
+host = "localhost"
+port = 11434
+model = "llama3.2"
+
+[openrouter]
+# Set api_key via OPENROUTER_API_KEY env var for security
+# api_key = "sk-or-..."
+default_model = "anthropic/claude-sonnet-4"
+base_url = "https://openrouter.ai/api/v1"
 
 [exo]
 base_url = "http://localhost:52415"
@@ -8,10 +18,9 @@ enable_cluster = false
 
 [chat]
 temperature = 0.7
-max_tokens = 512
+max_tokens = 2048
 stream = true
 
-
-[search]
-provider = "bing"
-api_key = ""  # DuckDuckGo doesn't require an API key
+working_memory_retrieval_limit = 3
+episodic_memory_retrieval_limit = 3
+semantic_memory_retrieval_limit = 3

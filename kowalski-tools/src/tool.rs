@@ -1,6 +1,5 @@
 use kowalski_core::error::KowalskiError;
 use kowalski_core::tools::{Tool, ToolInput, ToolOutput};
-use tokio::runtime::Handle;
 
 pub struct ToolManager {
     tools: Vec<Box<dyn Tool + Send + Sync>>,
@@ -36,11 +35,24 @@ impl ToolManager {
         name: &str,
         input: ToolInput,
     ) -> Result<ToolOutput, KowalskiError> {
-        if let Some(result) = self.with_tool_mut(name, |tool| {
+        // Find the tool and validate input synchronously
+        let tool_result = self.with_tool_mut(name, |tool| {
             tool.validate_input(&input)?;
-            Handle::current().block_on(tool.execute(input))
-        }) {
-            result
+            Ok::<_, KowalskiError>(())
+        });
+
+        // Check if tool was found and input was valid
+        if tool_result.is_none() {
+            return Err(KowalskiError::ToolInvalidInput(format!(
+                "Tool not found: {}",
+                name
+            )));
+        }
+
+        // Now execute the tool asynchronously
+        // We need to get the tool again since we can't borrow across await points
+        if let Some(tool) = self.tools.iter_mut().find(|t| t.name() == name) {
+            tool.execute(input).await
         } else {
             Err(KowalskiError::ToolInvalidInput(format!(
                 "Tool not found: {}",

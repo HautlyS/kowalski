@@ -4,7 +4,7 @@ use futures::StreamExt;
 use kowalski_academic_agent::AcademicAgent;
 use kowalski_code_agent::CodeAgent;
 use kowalski_core::agent::Agent;
-use kowalski_core::config::Config;
+use kowalski_core::config::{Config, Provider};
 use kowalski_core::tools::ToolCall;
 use kowalski_data_agent::DataAgent;
 use kowalski_web_agent::WebAgent;
@@ -20,6 +20,15 @@ use tokio::sync::RwLock;
 struct Cli {
     #[clap(subcommand)]
     command: Option<Commands>,
+    /// Provider to use (ollama, openrouter, exo)
+    #[clap(short, long, global = true)]
+    provider: Option<String>,
+    /// Model to use
+    #[clap(short, long, global = true)]
+    model: Option<String>,
+    /// OpenRouter API key (or set OPENROUTER_API_KEY env var)
+    #[clap(long, global = true)]
+    api_key: Option<String>,
 }
 
 #[derive(Parser, Debug)]
@@ -41,10 +50,13 @@ enum Commands {
         #[clap(short, long)]
         config: Option<String>,
     },
-    /// Chat with an agent
+    /// Chat with an agent (interactive or single message)
     Chat {
         /// Agent name or type
         agent: String,
+        /// Message to send (non-interactive mode)
+        #[clap(short, long)]
+        message: Option<String>,
         /// Optional system prompt
         #[clap(short, long)]
         prompt: Option<String>,
@@ -55,23 +67,64 @@ enum Commands {
         #[clap(short, long)]
         model: Option<String>,
     },
+    /// Single-shot query to an agent (creates temp agent, executes, returns result)
+    Query {
+        /// Agent type (web, academic, code, data)
+        agent_type: String,
+        /// The query/message to process
+        message: String,
+        /// Optional model override
+        #[clap(short, long)]
+        model: Option<String>,
+    },
     /// List available agent types
     List,
     /// List active agents
     Agents,
+    /// Health check - verify kowalski is working
+    Health,
 }
 
 struct AgentManager {
     agents: Arc<RwLock<HashMap<String, Box<dyn Agent + Send + Sync>>>>,
     configs: Arc<RwLock<HashMap<String, Config>>>,
+    default_provider: Option<Provider>,
+    default_model: Option<String>,
+    api_key: Option<String>,
 }
 
 impl AgentManager {
-    fn new() -> Self {
+    fn new(provider: Option<Provider>, model: Option<String>, api_key: Option<String>) -> Self {
         Self {
             agents: Arc::new(RwLock::new(HashMap::new())),
             configs: Arc::new(RwLock::new(HashMap::new())),
+            default_provider: provider,
+            default_model: model,
+            api_key,
         }
+    }
+
+    fn build_config(&self) -> Config {
+        let mut config = Config::default();
+        
+        if let Some(ref provider) = self.default_provider {
+            config.provider = provider.clone();
+        }
+        
+        if let Some(ref api_key) = self.api_key {
+            config.openrouter.api_key = Some(api_key.clone());
+        }
+        
+        if let Some(ref model) = self.default_model {
+            match config.provider {
+                Provider::Ollama => config.ollama.model = model.clone(),
+                Provider::OpenRouter => config.openrouter.default_model = model.clone(),
+                Provider::Exo => config.ollama.model = model.clone(),
+            }
+        }
+        
+        config.apply_env_overrides();
+        config
     }
 
     async fn create_agent(
@@ -81,7 +134,7 @@ impl AgentManager {
         _prompt: Option<&str>,
         _temperature: Option<f32>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let config = Config::default();
+        let config = self.build_config();
         let agent: Box<dyn Agent + Send + Sync> = match agent_type {
             "web" => Box::new(WebAgent::new(config.clone()).await?),
             "academic" => Box::new(AcademicAgent::new(config.clone()).await?),
@@ -128,7 +181,9 @@ impl AgentManager {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::init();
     let cli = Cli::parse();
-    let manager = AgentManager::new();
+    
+    let provider = cli.provider.and_then(|p| p.parse::<Provider>().ok());
+    let manager = AgentManager::new(provider, cli.model, cli.api_key);
 
     match cli.command {
         Some(Commands::Create {
@@ -143,7 +198,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .create_agent(name, &agent_type, prompt.as_deref(), temperature)
                 .await?
         }
-        Some(Commands::Chat { agent, .. }) => {
+        Some(Commands::Chat { agent, message, .. }) => {
             let agents_guard = manager.get_agent_mut(&agent).await;
             if let Some(mut agents_guard) = agents_guard {
                 if let Some(agent_ref) = agents_guard.get_mut(&agent) {
@@ -151,43 +206,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .get_config(&agent)
                         .await
                         .unwrap_or_else(Config::default);
-                    let conv_id = agent_ref.start_conversation(&config.ollama.model);
-                    println!(
-                        "Chat session started with agent '{}'. Type /bye to end chat.",
-                        agent
-                    );
-                    println!("Model in use: {}", config.ollama.model);
-                    // --- DEBUG: Print registered tools if available ---
-                    let any_agent = agent_ref.as_any();
-                    if let Some(data_agent) = any_agent.downcast_ref::<DataAgent>() {
-                        let tools = data_agent.list_tools().await;
-                        info!("Registered tools:");
-                        for (name, desc) in tools {
-                            info!("  - {}: {}", name, desc);
-                        }
-                    } else if let Some(academic_agent) = any_agent.downcast_ref::<AcademicAgent>() {
-                        let tools = academic_agent.list_tools().await;
-                        info!("Registered tools:");
-                        for (name, desc) in tools {
-                            info!("  - {}: {}", name, desc);
-                        }
-                    } else if let Some(code_agent) = any_agent.downcast_ref::<CodeAgent>() {
-                        let tools = code_agent.list_tools().await;
-                        info!("Registered tools:");
-                        for (name, desc) in tools {
-                            info!("  - {}: {}", name, desc);
-                        }
-                    } else if let Some(web_agent) = any_agent.downcast_ref::<WebAgent>() {
-                        let tools = web_agent.list_tools().await;
-                        info!("Registered tools:");
-                        for (name, desc) in tools {
-                            info!("  - {}: {}", name, desc);
-                        }
+                    let conv_id = agent_ref.start_conversation(&config.effective_model());
+                    
+                    if let Some(msg) = message {
+                        println!("Provider: {}, Model: {}", config.provider, config.effective_model());
+                        let response = agent_ref.chat_with_tools(&conv_id, &msg).await?;
+                        println!("{}", response);
                     } else {
-                        info!("Tool listing not available for this agent type.");
+                        println!(
+                            "Chat session started with agent '{}'. Type /bye to end chat.",
+                            agent
+                        );
+                        println!("Provider: {}, Model in use: {}", config.provider, config.effective_model());
+                        let any_agent = agent_ref.as_any();
+                        if let Some(data_agent) = any_agent.downcast_ref::<DataAgent>() {
+                            let tools = data_agent.list_tools().await;
+                            info!("Registered tools:");
+                            for (name, desc) in tools {
+                                info!("  - {}: {}", name, desc);
+                            }
+                        } else if let Some(academic_agent) = any_agent.downcast_ref::<AcademicAgent>() {
+                            let tools = academic_agent.list_tools().await;
+                            info!("Registered tools:");
+                            for (name, desc) in tools {
+                                info!("  - {}: {}", name, desc);
+                            }
+                        } else if let Some(code_agent) = any_agent.downcast_ref::<CodeAgent>() {
+                            let tools = code_agent.list_tools().await;
+                            info!("Registered tools:");
+                            for (name, desc) in tools {
+                                info!("  - {}: {}", name, desc);
+                            }
+                        } else if let Some(web_agent) = any_agent.downcast_ref::<WebAgent>() {
+                            let tools = web_agent.list_tools().await;
+                            info!("Registered tools:");
+                            for (name, desc) in tools {
+                                info!("  - {}: {}", name, desc);
+                            }
+                        } else {
+                            info!("Tool listing not available for this agent type.");
+                        }
+                        chat_loop(agent_ref, conv_id).await?;
                     }
-                    // --- END DEBUG ---
-                    chat_loop(agent_ref, conv_id).await?;
                 } else {
                     println!("Agent '{}' not found.", agent);
                 }
@@ -195,10 +255,67 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("Agent '{}' not found.", agent);
             }
         }
+        Some(Commands::Query { agent_type, message, model }) => {
+            let query_model = model.or_else(|| manager.default_model.clone());
+            let query_config = {
+                let mut cfg = Config::default();
+                if let Some(ref provider) = manager.default_provider {
+                    cfg.provider = provider.clone();
+                }
+                if let Some(ref api_key) = manager.api_key {
+                    cfg.openrouter.api_key = Some(api_key.clone());
+                }
+                if let Some(ref m) = query_model {
+                    match cfg.provider {
+                        Provider::Ollama => cfg.ollama.model = m.clone(),
+                        Provider::OpenRouter => cfg.openrouter.default_model = m.clone(),
+                        Provider::Exo => cfg.ollama.model = m.clone(),
+                    }
+                }
+                cfg.apply_env_overrides();
+                cfg
+            };
+            
+            let agent: Box<dyn Agent + Send + Sync> = match agent_type.as_str() {
+                "web" => Box::new(WebAgent::new(query_config.clone()).await?),
+                "academic" => Box::new(AcademicAgent::new(query_config.clone()).await?),
+                "code" => Box::new(CodeAgent::new(query_config.clone()).await?),
+                "data" => Box::new(DataAgent::new(query_config.clone()).await?),
+                _ => {
+                    eprintln!("Unknown agent type: {}", agent_type);
+                    return Ok(());
+                }
+            };
+            
+            let mut agent = agent;
+            let conv_id = agent.start_conversation(&query_config.effective_model());
+            let response = agent.chat_with_tools(&conv_id, &message).await?;
+            println!("{}", response);
+        }
         Some(Commands::List) => list_agents()?,
         Some(Commands::Agents) => manager.list_agents().await?,
+        Some(Commands::Health) => {
+            let config = manager.build_config();
+            println!("Kowalski Health Check");
+            println!("  Provider: {}", config.provider);
+            println!("  Model: {}", config.effective_model());
+            match config.provider {
+                Provider::OpenRouter => {
+                    match &config.openrouter.api_key {
+                        Some(key) => println!("  API Key: {}...", &key[..8.min(key.len())]),
+                        None => println!("  API Key: NOT SET (set OPENROUTER_API_KEY)"),
+                    }
+                }
+                Provider::Ollama => {
+                    println!("  Ollama URL: http://{}:{}", config.ollama.host, config.ollama.port);
+                }
+                Provider::Exo => {
+                    println!("  Exo URL: {}", config.exo.base_url);
+                }
+            }
+            println!("  Status: OK");
+        }
         None => {
-            // Enter REPL mode if no subcommand is provided
             println!("Kowalski CLI Interactive Mode. Type 'help' for commands.");
             repl(manager).await?;
         }
@@ -341,12 +458,12 @@ async fn repl(manager: AgentManager) -> Result<(), Box<dyn std::error::Error>> {
                                 .get_config(name)
                                 .await
                                 .unwrap_or_else(Config::default);
-                            let conv_id = agent_ref.start_conversation(&config.ollama.model);
+                            let conv_id = agent_ref.start_conversation(&config.effective_model());
                             info!(
                                 "Chat session started with agent '{}'. Type /bye to end chat.",
                                 name
                             );
-                            info!("[DEBUG] Model in use: {}", config.ollama.model);
+                            info!("[DEBUG] Provider: {}, Model: {}", config.provider, config.effective_model());
                             // --- DEBUG: Print registered tools if available ---
                             let any_agent = agent_ref.as_any();
                             if let Some(data_agent) = any_agent.downcast_ref::<DataAgent>() {
